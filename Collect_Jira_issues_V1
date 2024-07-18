@@ -7,7 +7,7 @@ one example with jean.dupont.partner@decathlon.com:707399ad-730c-46e7-ab28-86a30
 finally, you have to encode this string in base64. The result of this encoding is the final string you have to use in the apiKey variable.
 The previous example give amVhbi5kdXBvbnQucGFydG5lckBkZWNhdGhsb24uY29tOjcwNzM5OWFkLTczMGMtNDZlNy1hYjI4LTg2YTMwMWNiZWRlYw==
  */
-const apiKey = 'aWJ0aXNzYW0uaGFrbW91bmUucGFydG5lckBkZWNhdGhsb24uY29tOkFUQVRUM3hGZkdGMDF4T2ozakhRVExlNFd0UUNDRHJHbTFsYmpWLV9peTN6MFpXOXhaNUNSTXZhVkZtR0dDS1JOTk5lM1paX0ViODhjdmgxUko5cno4ZGQwRm1fb0ZoT2g1Y3dyVjR5OXlwdExrVlF2TG1WdU5McVZLQVBvN0l5Q0Fld0VrSVNySV9LVWdtOW1rU25xeEtrbmk5WGlVNXc1d3NFb29xVExVZUNReDl4aTcwazlnTT1CNkE5QTkwQQ=='
+const apiKey = 'AddYourJiraKeyHere'
 
 const cellsBoard = "B:B";
 const cellDateDebut = "E1";
