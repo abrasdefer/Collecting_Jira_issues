@@ -1,0 +1,623 @@
+
+/*
+In order to create you own API key, please visit https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/ and follow the process
+once you have you API key, you have to create a string like the following : <your Email Address Used to log in Jira>:<your API key>
+one example with jean.dupont.partner@decathlon.com:707399ad-730c-46e7-ab28-86a301cbedec (obviously this API Key is random, yours will nor look like this one)
+
+finally, you have to encode this string in base64. The result of this encoding is the final string you have to use in the apiKey variable.
+The previous example give amVhbi5kdXBvbnQucGFydG5lckBkZWNhdGhsb24uY29tOjcwNzM5OWFkLTczMGMtNDZlNy1hYjI4LTg2YTMwMWNiZWRlYw==
+ */
+const apiKey = 'aWJ0aXNzYW0uaGFrbW91bmUucGFydG5lckBkZWNhdGhsb24uY29tOkFUQVRUM3hGZkdGMDF4T2ozakhRVExlNFd0UUNDRHJHbTFsYmpWLV9peTN6MFpXOXhaNUNSTXZhVkZtR0dDS1JOTk5lM1paX0ViODhjdmgxUko5cno4ZGQwRm1fb0ZoT2g1Y3dyVjR5OXlwdExrVlF2TG1WdU5McVZLQVBvN0l5Q0Fld0VrSVNySV9LVWdtOW1rU25xeEtrbmk5WGlVNXc1d3NFb29xVExVZUNReDl4aTcwazlnTT1CNkE5QTkwQQ=='
+
+const cellsBoard = "B:B";
+const cellDateDebut = "E1";
+
+const sheetParam = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("param");
+const sheetSprints = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("sprints");
+const sheetData = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("data");
+
+const listStatusClose = ["Close", "Canceled"];
+
+let listBoards = [];
+let dateDeb;
+let listSprintsInList = [];
+
+let changelog;
+
+function initParam() {
+  console.log("initParam DEB");
+  listBoards = sheetParam.getRange(cellsBoard).getValues().map(a => a[0]).filter(a => a!= "");
+  console.log(listBoards);
+  dateDeb = new Date(sheetParam.getRange(cellDateDebut).getValue());
+  listSprintsInList = sheetSprints.getRange("A2:D").getValues().filter(a => a[0] != '').map(a => {
+    let obj = {};
+    obj.id = a[0]
+    obj.name = a[1]
+    obj.startDate = a[2]
+    obj.state = a[3]
+    return obj
+  })
+  console.log("initParam FIN");
+}
+
+function updateListSprints() { 
+  console.log("updateListSprints DEB");
+  for (let board of listBoards){
+    const listSprints = getListAllSprintsByBoard(board)
+    for (let sprint of listSprints) {
+      if (listSprintsInList.map(a => a.id).includes(sprint.id) && sprint.state != "closed"){
+        let rowSprint = getRowByKeyAndSheetAndColumn(sprint.id,sheetSprints,1);
+        sheetSprints.getRange(rowSprint,4).setValue(sprint.state);
+        // listSprints[listSprintsInList.findIndex( elt => elt.id === sprint.id)].state = sprint.state;
+      }
+      if (sprint.state != "closed" && !listSprintsInList.map(a => a.id).includes(sprint.id) && new Date(sprint.startDate) >= dateDeb && sprint.originBoardId == board) {
+        sheetSprints.appendRow([sprint.id,sprint.name,sprint.startDate, sprint.state])
+        // listSprintsInList.push(sprint);
+      }
+    }
+  }
+  // comme on a changé la liste des sprints, on actualise cette liste 
+  initParam();
+  console.log("updateListSprints FIN");
+}
+
+function updateClosedSprints(){
+  console.log("updateClosedSprints DEB");
+  const listSprints = getListActiveSprintsInSheet();
+  for (sprint of listSprints){
+    const sprintInfo = getSprintInfoBySprintId(sprint.id);
+    let rowActiveSprint = getRowByKeyAndSheetAndColumn(sprintInfo.id,sheetSprints,1);
+    sheetSprints.getRange(rowActiveSprint,4).setValue(sprintInfo.state);
+  }
+  console.log("updateClosedSprints FIN");
+}
+
+function getListActiveSprintsInSheet(){
+  return sheetSprints.getRange("A2:D").getValues().filter(a => a[0] != "").map(a => {
+    let obj = {};
+    obj.id = a[0]
+    obj.name = a[1]
+    obj.startDate = a[2]
+    obj.state = a[3]
+    return obj
+  }).filter(a => a.state == "active")
+}
+
+function main() {
+  console.log("main DEB");
+  initParam();
+  // on MAJ la liste des sprints avec les sprints encore actifs
+  updateListSprints();
+
+  for (sprint of listSprintsInList) {
+    if (sprint.state == "active") {
+      console.log ("DEB Sprint - " + sprint.name);
+      console.log("cf[10020] = " + sprint.id + " and issuetype != \"Action retro\"")
+      const listIssues = searchJql("cf[10020] = " + sprint.id + " and issuetype != \"Action retro\"",["key","project","issuetype","summary","customfield_10016", "status", "customfield_10020", "components", "created","customfield_10026"]);
+      for (const issue of listIssues){
+        console.log ("DEB Issue - " + issue.key);
+        console.log(issue);
+        let rowIssue = getRowIssuebyKeyAndSprint(issue.key,sprint.name);
+        // on ne MAJ l'issue que si elle est encore ouverte
+        if (!listStatusClose.includes(sheetData.getRange(rowIssue,4).getValue())){
+          sheetData.getRange(rowIssue,1).setValue(issue.fields.project.key)
+          sheetData.getRange(rowIssue,2).setRichTextValue(SpreadsheetApp.newRichTextValue().setText(issue.key).setLinkUrl("https://decathlon.atlassian.net/browse/" + issue.key).build());
+          sheetData.getRange(rowIssue,3).setValue(issue.fields.issuetype.name);
+          sheetData.getRange(rowIssue,4).setValue(issue.fields.status.name);
+          sheetData.getRange(rowIssue,5).setValue(issue.fields.summary)
+          sheetData.getRange(rowIssue,6).setValue(issue.fields.components.map(a => a.name).toString())
+          sheetData.getRange(rowIssue,7).setValue(issue.fields.customfield_10026 != null ? issue.fields.customfield_10026 : "");
+          sheetData.getRange(rowIssue,8).setValue(sprint.name);
+          
+          /* TRAITEMENT DES TEMPS DANS LE STATUT */
+          changelog = getChangeLogByJiraKey(issue.key);
+          let listStatuses = getHistory(issue.fields.created);
+          if (listStatuses.length >  0) {
+            const timeInStatus = calculTimeInStatus(listStatuses, issue.key);
+            if (timeInStatus != null) {
+              let col = 9;
+              while(sheetData.getRange(1,col).getValue() != ""){
+                const statutEnCours = sheetData.getRange(1,col).getValue()
+                // Si le statut de la colonne en cours est présent dans la Map des time in status, alors on alimente la cellule avec le temps, puis on supprime cette entrée du tableau
+                if (timeInStatus.has(statutEnCours) ) {
+                  sheetData.getRange(rowIssue,col).setValue(timeInStatus.get(statutEnCours))
+                  timeInStatus.delete(statutEnCours)
+                } 
+                col++
+              }    
+              // traitement de tous les statuts restants (qui n'ont pas encore de colonne attitrée)
+              // On créé une colonne pour ces nouveaux statuts
+              for (let entry of timeInStatus.entries()){
+                  sheetData.getRange(1,col).setValue(entry[0]);
+                  sheetData.getRange(rowIssue,col).setValue(entry[1]);
+                  col++
+              }
+            } 
+          }
+
+          /* TRAITEMENT DES SPRINTS */
+          if (issue.fields.issuetype.name == "Story")
+          {
+            let listSprint = getSprintHistory(issue.fields.created);
+            console.log("DEBUT TRAITEMENT SPRINT - " + issue.key);
+            console.log(listSprint);
+            let col = 30;
+            for (sprintInHistory of listSprint) {
+              var tableauSprint = sprintInHistory.to.split(", ");
+              console.log(tableauSprint[tableauSprint.length - 1]);
+              console.log(sheetData.getRange(rowIssue,8).getValue());
+              if (tableauSprint[tableauSprint.length - 1] == sheetData.getRange(rowIssue,8).getValue()) {
+              console.log(sprintInHistory);
+              sheetData.getRange(rowIssue,col).setValue(sprintInHistory.date);
+              var dateToCompare = new Date(getSprintStartDateByName(sheetData.getRange(rowIssue,8).getValue()));
+              console.log("SprintInHistoryDate" + sprintInHistory.date);
+              console.log("doit être plus petit que");
+              console.log("SprintStartDate" + dateToCompare);
+              if (sprintInHistory.date <= dateToCompare){
+                sheetData.getRange(rowIssue,col+1).setValue("*");
+                }
+              else {
+                sheetData.getRange(rowIssue,col+1).setValue("");
+              }
+
+              }
+            }
+            console.log (listSprint.length);
+            if (listSprint.length == 0){
+              console.log("entrée if 0");
+              dateCreation = new Date(issue.fields.created);
+              console.log (dateCreation);
+              sheetData.getRange(rowIssue,col).setValue(dateCreation);
+              if (dateCreation <= new Date(getSprintStartDateByName(sheetData.getRange(rowIssue,8).getValue()))){
+                sheetData.getRange(rowIssue,col+1).setValue("*");
+              }
+            }
+            console.log("FIN TRAITEMENT SPRINT - " + issue.key);
+
+          }
+        } else {
+          console.log("issue " + issue.key + " déjà close, pas de MAJ")
+        }
+        console.log ("FIN Issue - " + issue.key);
+      }
+      console.log ("FIN Sprint - " + sprint.name);
+    } else {
+      console.log("Sprint " + sprint.name + " déjà closed, pas de MAJ");
+    }
+    
+  }
+  updateClosedSprints();
+  console.log("main FIN");
+  lastTimeUpdated(sheetParam.getRange("I2"));
+}
+
+function getRowIssuebyKey(pKey){
+  console.log("getRowIssuebyKey DEB - key = " + pKey);
+
+  let row = 2
+  while (sheetData.getRange(row, 2).getValue() != pKey && !sheetData.getRange(row, 2).isBlank()){
+    row++;
+  }
+  console.log("getRowIssuebyKey FIN - row = " + row);
+  return row;
+}
+
+function getRowIssuebyKeyAndSprint(pKey, sprint){
+  console.log("getRowIssuebyKey DEB - key = " + pKey + " sprint = " + sprint);
+
+  let row = 2
+  while (sheetData.getRange(row, 2).getValue() + sheetData.getRange(row, 8).getValue() != pKey + sprint && !sheetData.getRange(row, 2).isBlank()){
+    row++;
+  }
+  console.log("getRowIssuebyKey FIN - row = " + row);
+  return row;
+}
+
+function getRowByKeyAndSheetAndColumn(pKey, pSheet, pColumnNumber){
+  console.log("getRowByKeyAndSheetAndColumn DEB - key : " + pKey + " - ColumnNumber : " + pColumnNumber);
+  let i = 1;
+  while (pSheet.getRange(i,pColumnNumber).getValue() != pKey && pSheet.getRange(i,pColumnNumber).getValue() != "") {
+    i++
+  }
+  console.log("getRowByKeyAndSheetAndColumn FIN - row = " + i);
+  return i;
+}
+
+function getHistory(pCreatedDate) {
+  console.log("getHistory DEB");
+  let historyStatuses = [];
+  for (let element of changelog) {
+    for (let item of element.items) {
+      if (item.field=== "status"){
+        const historyStatus = {
+          "from": item.fromString,
+          "to": item.toString,
+          "date": new Date(element.created)
+        };
+        historyStatuses.push(historyStatus);
+      }
+    }
+  }
+
+  if (historyStatuses .length > 0) {
+    historyStatuses.unshift({
+      "from": "creation",
+      "to": historyStatuses[0].from,
+      "date": new Date(pCreatedDate)
+    });
+  } 
+  console.log("getHistory FIN");
+  return historyStatuses.sort((a,b) => a.date - b.date);
+}
+
+function getSprintHistory(pCreatedDate) {
+  console.log("getSprintHistory DEB");
+  let sprintStatuses = []; //Ajout Antoine
+  for (let element of changelog) {
+    for (let item of element.items) {
+      if (item.field=== "Sprint"){
+        const sprintStatus = {
+          "from": item.fromString,
+          "to": item.toString,
+          "date": new Date(element.created)
+        };
+        sprintStatuses.push(sprintStatus);
+      }
+    }
+  }
+  console.log("getSprintHistory FIN");
+  return sprintStatuses.sort((a,b) => a.date - b.date);
+}
+
+function calculTimeInStatus(pTabStatus,pKey) {
+  console.log("calculTimeInStatus DEB - Key = " + pKey);
+  let mapTimeInStatus = new Map();
+  for (let i = pTabStatus.length - 1 ; i>0; --i){
+    let status = pTabStatus[i].from;
+    if (status.localeCompare(pTabStatus[i-1].to, "fr", {sensitivity: 'base'}) != 0){
+      console.error("probleme d'integrite : " + pKey);
+      return;
+    }
+    // on convertit les millisecondes en jour calendaire
+    let timeInStatus = (pTabStatus[i].date - pTabStatus[i-1].date) / 3600000 / 24
+    if (mapTimeInStatus.has(status)){
+      timeInStatus = parseFloat(timeInStatus) + parseFloat(mapTimeInStatus.get(status));
+    }
+    //On arrondit le résultat en jours et on met le bon symbole en décimale
+    mapTimeInStatus.set(status,parseFloat(timeInStatus).toFixed(2).replace('.',','))
+  }
+  console.log("calculTimeInStatus FIN - Key = " + pKey);
+  return mapTimeInStatus
+}
+
+function lastTimeUpdated(pRange){
+  pRange.setValue("Last updated : " + new Date().toLocaleDateString("fr-fr") + " at " + new Date().toLocaleTimeString("fr-fr"));
+}
+
+function test(){
+  console.log(getListSprintsByBoardIdandStartAt(9330,0))
+}
+
+const headers_get = {
+    'headers': {
+     'Authorization':'Basic ' + apiKey
+    }
+  };
+
+const statusDone = [ 'DONE-',
+  'Close',
+  'Ready for Deployment',
+  'Ready for TNR',
+  'Backlog PO',
+  'Validated by PO',
+  'Validated',
+  'Ready for deployement',
+  'Done' ];
+
+function getUrlSprintByBoard (boardId) {
+  return "https://decathlon.atlassian.net/rest/agile/1.0/board/" + boardId + "/sprint";
+}
+
+function getUrlSprintByBoardAndStartAt(boardId, pStartAt) {
+  return "https://decathlon.atlassian.net/rest/agile/1.0/board/" + boardId + "/sprint?startAt=" + pStartAt;
+}
+
+function getUrlIssueBySprintId (sprintId) {
+  return "https://decathlon.atlassian.net/rest/agile/1.0/sprint/" + sprintId + "/issue"
+}
+
+function getUrlSprintInfoBySprintId(pSprintId){
+  return "https://decathlon.atlassian.net/rest/agile/1.0/sprint/" + pSprintId;
+}
+
+function getSprintInfoBySprintId(pSprintId) {
+  const response = UrlFetchApp.fetch(getUrlSprintInfoBySprintId(pSprintId),headers_get);
+  const respJson = JSON.parse(response.getContentText());
+  return respJson;
+}
+
+function getPRbyJiraId(pJiraId){
+  const urlGet = "https://decathlon.atlassian.net/rest/dev-status/latest/issue/detail?issueId=" + pJiraId + "&applicationType=GitHub&dataType=pullrequest"
+  const response = UrlFetchApp.fetch(urlGet,headers_get);
+  const respJson = JSON.parse(response.getContentText());
+  return respJson;
+}
+
+function searchJql(pJql, pListFields) {
+  var url = "https://decathlon.atlassian.net/rest/api/latest/search"
+  var listIssues = [];
+  var i = 0
+  var respJson;
+  do {
+    i++;
+    var payload = {
+      'fields':pListFields,
+      'jql':pJql,
+      'startAt':(i-1)*50
+    }
+
+    var options = {
+      'method' : 'post',
+      'headers' : {
+        'Authorization':'Basic ' + apiKey,
+        'Content-Type': 'application/json'
+      },
+      'payload' : JSON.stringify(payload)
+    };
+
+    const response = UrlFetchApp.fetch(url,options);
+    respJson = JSON.parse(response.getContentText())
+    listIssues = listIssues.concat(respJson.issues);
+  } while (respJson.total > i*50) ;
+  return listIssues
+}
+
+function getChangeLogByJiraKey(pKey) {
+  let i = 0;
+  let ret = [];
+  let isLast = false;
+  do {
+    i++;
+    let startAt = (i-1)*100;
+    let url = "https://decathlon.atlassian.net/rest/api/latest/issue/" + pKey + "/changelog?startAt=" + startAt;
+    const response = UrlFetchApp.fetch(url,headers_get);
+    const respJSON = JSON.parse(response.getContentText());
+    ret = ret.concat(respJSON.values);
+    isLast = respJSON.isLast;
+  } while (!isLast)
+  return ret;
+}
+
+function putJiraAPI(pUrl, pfield, pvalue){
+  var obj = {};
+  obj[pfield]=pvalue
+  var payload = {
+    "fields": obj
+  };
+  console.log(payload);
+
+  var options = {
+    'method' : 'put',
+    'headers' : {
+      'Authorization': 'Basic ' + apiKey,
+      'Content-Type': 'application/json'
+    },
+    'payload' : JSON.stringify(payload)
+  };
+
+  UrlFetchApp.fetch(pUrl, options);
+}
+
+function getListSprintsByBoardId (boardId) {
+  var response = UrlFetchApp.fetch(this.getUrlSprintByBoard(boardId), headers_get);
+  var respJson = JSON.parse(response.getContentText());
+  return respJson.values.sort((a,b) => a.id - b.id);
+}
+
+function getListAllSprintsByBoard(boardId){
+  var tab = [];
+  var startAt = 0
+  do {
+    var listsSprints = this.getListSprintsByBoardIdandStartAt(boardId, startAt);
+    tab = tab.concat(listsSprints.values);
+    startAt += 50;    
+  } while (!listsSprints.isLast);
+  return tab.sort((a,b) => a.id - b.id);
+}
+
+function getListSprintsByBoardIdandStartAt (boardId,pStartAt) {
+  console.log("DEB getListSprintsByBoardIdandStartAt : boardId = " + boardId + " | startAt = " + pStartAt)
+  var response = UrlFetchApp.fetch(this.getUrlSprintByBoardAndStartAt(boardId,pStartAt), headers_get);
+  var respJson = JSON.parse(response.getContentText());
+  let valeurRetour = {};
+  valeurRetour.isLast = respJson.isLast;
+  valeurRetour.values = respJson.values.sort((a,b) => a.id - b.id);
+  return valeurRetour;
+}
+
+function getListIssuesBySprint(sprintId) {
+  const response = UrlFetchApp.fetch(this.getUrlIssueBySprintId(sprintId), headers_get);
+  const respJson = JSON.parse(response.getContentText());
+  return respJson.issues;
+}
+
+function getListIssuesByListSprint(tabSprint) {
+  var tabReturn = [];
+  for (var sprint of tabSprint){
+    tabReturn = tabReturn.concat(this.getListIssuesBySprint(sprint.id));
+  }
+  return tabReturn
+}
+
+function getPointsMarquesBySprint (sprintId) {
+  return this.getPointsMarquesByListIssues(this.getListIssuesBySprint(sprintId));
+}
+
+function getPointsMarquesByListIssues(listIssues) {
+  points = 0
+  for (issue of listIssues) {
+    if (statusDone.includes(String(issue.fields.status.name))) {
+      if (issue.fields.customfield_10016 != null) {
+        points += issue.fields.customfield_10016;
+      }
+    }
+  }
+  return points;
+}
+
+function getListIssuesByDev(listIssues, devName) {
+  var vListIssues = [];
+  for (issue of listIssues){
+    if (issue.fields.assignee != null && issue.fields.assignee.displayName == devName) {
+      vListIssues.push(issue);
+    }
+  }
+  return vListIssues;
+}
+
+function getPointsMarquesByDev(listIssues, devName) {
+  points=0;
+  for (issue of this.getListIssuesByDev(listIssues, devName)) {
+    if (statusDone.includes(String(issue.fields.status.name))) {
+      if (issue.fields.customfield_10016 != null) {
+        points += issue.fields.customfield_10016;
+      }
+    }
+  }
+  return points;
+}
+
+function getListActiveSprintsByBoard(boardId){
+  var tab = [];
+  var startAt = 0
+  do {
+    var listsSprints = this.getListSprintsByBoardIdandStartAt(boardId, startAt);
+    for (sprint of listsSprints.values) {
+      if (sprint.state == "active") {
+        tab.push(sprint);
+      }
+    }
+    startAt += 50;    
+  } while (!listsSprints.isLast);
+  return tab;
+}
+
+function getLastActiveSprintByBoard (boardId) {
+  var tab = getListActiveSprintsByBoard(boardId);
+  return tab[tab.length-1];
+}
+
+function getStatusDone() {
+  return statusDone;
+}
+
+function getNbBugsBySprint(sprintId) {
+  return getNbBugsByListIssues(this.getListIssuesBySprint(sprintId));
+}
+
+function getNbIssuesByListIssuesAndIssueType(listIssues, pIssueType) {
+  var nbBugs = 0
+  for (issue of listIssues) {
+    if (issue.fields.issuetype.name == pIssueType) {
+      nbBugs++;
+    }
+  }
+  return nbBugs;
+}
+
+function getListIssuesByBoardAndStatus(pBoard,pStatus){
+  return getListIssuesByListIssuesAndStatus(getListIssuesByListSprint(getListActiveSprintsByBoard(pBoard)), pStatus);
+}
+
+function getListIssuesByListIssuesAndStatus(pList, pStatus){
+  listIssues = pList.slice();
+  for (var i = listIssues.length - 1 ; i >=0 ; --i) {
+    issue = listIssues[i]
+    if (issue.fields.status.name != pStatus){
+      listIssues.splice(i,1);
+    }
+  }
+  return listIssues;
+}
+
+function getMapPointsByComponentByBoard(pBoardId){
+  const listIssues = this.getListIssuesBySprint(this.getLastActiveSprintByBoard(pBoardId).id);
+  var mapComponents = new Map();
+  for (var issue of listIssues) {
+    if (issue.fields.components!= null && issue.fields.customfield_10016 != null) {
+      for (var component of issue.fields.components){
+        if (mapComponents.has(component.name)) {
+          mapComponents.set(component.name,mapComponents.get(component.name) + issue.fields.customfield_10016);
+        } else {
+          mapComponents.set(component.name,issue.fields.customfield_10016)
+        }
+      }      
+    }
+  }
+  for (const [key, value] of mapComponents.entries()) {
+    console.log(`${key} ; ${value}`);
+  }
+  return mapComponents;
+}
+
+// customfield_14589
+function getMapPointsByPriorityGridByBoard(pBoardId){
+  const listIssues = this.getListIssuesBySprint(this.getLastActiveSprintByBoard(pBoardId).id);
+  var mapGrid = new Map();
+  for (var issue of listIssues) {
+    if (issue.fields.customfield_14589!= null && issue.fields.customfield_10026 != null) {
+      if (mapGrid.has(issue.fields.customfield_14589.value)) {
+        mapGrid.set(issue.fields.customfield_14589.value,mapGrid.get(issue.fields.customfield_14589.value) + issue.fields.customfield_10026);
+      } else {
+        mapGrid.set(issue.fields.customfield_14589.value,issue.fields.customfield_10026)
+      }
+    }      
+   
+  }
+  for (const [key, value] of mapGrid.entries()) {
+    console.log(`${key} ; ${value}`);
+  }
+  return mapGrid;
+}
+
+function getMapPointsByEpicByBoard(pBoardId){
+  const listIssues = this.getListIssuesBySprint(this.getLastActiveSprintByBoard(pBoardId).id);
+  var mapGrid = new Map();
+  for (var issue of listIssues) {
+    if (issue.fields.parent != null && issue.fields.customfield_10016 != null && issue.fields.parent.fields.issuetype.name == "Epic"){
+      let epic = issue.fields.parent.fields;
+      if (mapGrid.has(epic.summary)) {
+        mapGrid.set(epic.summary,mapGrid.get(epic.summary) + issue.fields.customfield_10016);
+      } else {
+        mapGrid.set(epic.summary,issue.fields.customfield_10016)
+      }
+    }
+  }
+  return mapGrid
+}
+
+function getListVersionsByProject (pProject){
+  let isLast = false;
+  let startAt = 0;
+  let listVersions = [];
+  while (!isLast){
+      let url = "https://decathlon.atlassian.net/rest/api/3/project/" + pProject + "/version?startAt=" + startAt;
+      const response = UrlFetchApp.fetch(url,headers_get);
+      const respJson = JSON.parse(response.getContentText());
+      listVersions = listVersions.concat(respJson.values);
+      isLast = respJson.isLast;
+      if (!isLast) startAt += respJson.maxResults;
+  }
+  return listVersions;
+}
+
+function getSprintStartDateByName(name){
+  console.log("getSprintStartDateByName DEB - name = " + name);
+
+  let row = 2
+  while (sheetSprints.getRange(row, 2).getValue() != name && !sheetSprints.getRange(row, 2).isBlank()){
+    row++;
+  }
+  console.log("getSprintStartDateByName FIN - date = " + sheetSprints.getRange(row, 3).getValue());
+  return sheetSprints.getRange(row, 3).getValue();
+}
